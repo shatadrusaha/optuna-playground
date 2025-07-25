@@ -1,0 +1,3 @@
+[submodule "pyzinga"]
+	path = pyzinga
+	url = git@github.com:shatadrusaha/pyzinga.git
