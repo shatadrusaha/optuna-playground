@@ -1,4 +1,5 @@
 """                     Import libraries.                       """
+import os
 import pandas as pd
 from sklearn.datasets import fetch_openml
 from sklearn.preprocessing import LabelEncoder
@@ -10,11 +11,19 @@ from pyzinga.pyzinga import plot_tools as ppt
 
 
 """                     User defined variables.                       """
+# Folders for saving artifacts (plots and files).
+folder_plots = 'artifacts/plots'
+folder_files = 'artifacts/files'
+
 # Random seed.
 random_seed = 14
 
 
 """                     Load and preprocess the data.                       """
+# Create folders for saving artifacts.
+os.makedirs(folder_plots, exist_ok=True)
+os.makedirs(folder_files, exist_ok=True)
+
 """
 https://scikit-learn.org/stable/datasets/loading_other_datasets.html
 https://www.openml.org/search?type=data&sort=version&status=any&order=asc&exact_name=adult&id=1590
@@ -68,13 +77,15 @@ y_encoded = le.fit_transform(y)
 print(f"Encoded 'y' classes: {le.classes_}")
 print(f"Sample encoded 'y': {y_encoded[:5]}\n")
 
-# Correlation matrix heatmap.
-# TODO: add kwars to plot_correlation_matrix. numerical columns only.
-df_corr = pd.concat(objs=[X, pd.Series(data=y_encoded, name='class')], axis=1)
-ppt.plot_correlation_matrix(
-    df=df_corr,
-    col_target='class',
-    folder_tosave_plot=None,
+# Correlation heatmap.
+ppt.corr_heatmap_plot(
+    df=pd.concat(objs=[X, pd.Series(data=y_encoded, name='class')], axis=1),
+    save_dir=folder_plots
+)
+ppt.corr_heatmap_plot(
+    df=pd.concat(objs=[X, pd.Series(data=y_encoded, name='class')], axis=1), 
+    save_dir=folder_plots,
+    mask_upper=False
 )
 
 """
@@ -102,8 +113,11 @@ X_train, X_val, X_test, y_train, y_val, y_test = pdt.split_data(
     split_val=0.1,
     random_state=random_seed
 )
-print(f"Shapes of the splits:\n"
+print(f"Shapes of the datasets:\n"
       f"\tX_train: {X_train.shape}, y_train: {y_train.shape}\n"
       f"\tX_val: {X_val.shape}, y_val: {y_val.shape}\n"
       f"\tX_test: {X_test.shape}, y_test: {y_test.shape}\n")
-
+# Shapes of the datasets:
+# 	X_train: (35165, 14), y_train: (35165,)
+# 	X_val: (3908, 14), y_val: (3908,)
+# 	X_test: (9769, 14), y_test: (9769,)
