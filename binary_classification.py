@@ -1,10 +1,12 @@
 """                     Import libraries.                       """
 import os
 import pandas as pd
+from datetime import datetime as dt
 from sklearn.datasets import fetch_openml
 from sklearn.preprocessing import LabelEncoder
 from pyzinga.pyzinga import data_tools as pdt
 from pyzinga.pyzinga import plot_tools as ppt
+from pyzinga.pyzinga import optuna_tools as pot
 
 # from sklearn.preprocessing import StandardScaler
 # from sklearn.compose import ColumnTransformer
@@ -15,8 +17,20 @@ from pyzinga.pyzinga import plot_tools as ppt
 folder_plots = 'artifacts/plots'
 folder_files = 'artifacts/files'
 
-# Random seed.
-random_seed = 14
+# Optuna study.
+n_trials = 5  # Number of trials to run.
+threshold = 0.5  # Threshold for binary classification.
+problem_type = 'binary_classification'  # or 'regression'
+
+# Mlflow.
+# TODO - Make sure to start the mlflow server/ui on the specific port first, via terminal.
+# mlflow server --host localhost --port 8080
+mlflow_exp_name = 'lgbm-optuna-binary-classification'  # Experiment name.
+mlflow_tracking_uri = 'http://localhost:8080' # MLflow Tracking Server URI.
+
+# Miscellaneous.
+gpu_flag = False  # Set to True if GPU is available, otherwise False.
+random_state = 14  # Random state for reproducibility.
 
 
 """                     Load and preprocess the data.                       """
@@ -103,15 +117,13 @@ print(f"Column names - raw data:\n\t{list(ct.feature_names_in_)}\n")
 print(f"Column names - transformed data:\n\t{ct.get_feature_names_out().tolist()}\n")
 """
 
-
-"""                     Model training and evaluation.                       """
 # Split the data into training, validation, and test sets.
 X_train, X_val, X_test, y_train, y_val, y_test = pdt.split_data(
     X=X,
     y=y_encoded,
     split_test=0.2,
     split_val=0.1,
-    random_state=random_seed
+    random_state=random_state
 )
 print(f"Shapes of the datasets:\n"
       f"\tX_train: {X_train.shape}, y_train: {y_train.shape}\n"
@@ -121,3 +133,157 @@ print(f"Shapes of the datasets:\n"
 # 	X_train: (35165, 14), y_train: (35165,)
 # 	X_val: (3908, 14), y_val: (3908,)
 # 	X_test: (9769, 14), y_test: (9769,)
+
+# pd.DataFrame(y_encoded).value_counts().plot(kind='bar')
+pd.Series(y_encoded).value_counts(normalize=True)
+
+
+"""                     Model training and evaluation.                       """
+
+"""
+# Objective parameter details:
+binary
+
+# Available options for parameters:
+- objective --> 'binary'
+- boosting --> 'gbdt', 'rf', 'dart'
+- data_sample_strategy --> 'bagging', 'goss'
+    - 'bagging' is only effective when 'bagging_freq' > 0 and 'bagging_fraction' < 1.0
+- tree_learner --> 'serial', 'feature', 'data', 'voting'
+
+# Default values for parameters:
+- objective --> 'regression'
+- boosting --> 'gbdt'
+- data_sample_strategy --> 'bagging'
+- num_iterations --> 100
+- learning_rate --> 0.1
+- num_leaves --> 31
+- tree_learner --> 'serial'
+- num_threads --> 0
+- device_type --> 'cpu'
+- seed --> None
+- max_depth --> -1 (no limit)
+- min_data_in_leaf --> 20
+- bagging_fraction --> 1.0
+- bagging_freq --> 0 (no bagging)
+- feature_fraction --> 1.0
+- early_stopping_round --> 0
+- lambda_l1 --> 0.0
+- lambda_l2 --> 0.0
+- drop_rate --> 0.1 (for 'dart' ONLY)
+- skip_drop --> 0.5 (for 'dart' ONLY)
+- metric --> "" (based on objective)
+"""
+
+# LightGBM model build parameters for optuna study.
+params_lgbm = {
+    # Core parameters
+    'objective': {'type': 'constant', 'value': 'binary'},
+    # 'boosting': {'type': 'constant', 'value': 'dart'},
+    'boosting': {'type': 'categorical', 'choices': ['gbdt', 'rf']},
+    'data_sample_strategy': {'type': 'constant', 'value': 'bagging'},
+    # 'data_sample_strategy': {'type': 'categorical', 'choices': ['bagging', 'goss']},
+    'num_iterations': {'type': 'int', 'low': 100, 'high': 1000, 'step': 50, 'log': False},
+    'learning_rate': {'type': 'float', 'low': 0.001, 'high': 0.8, 'step': None, 'log': True},
+    'num_leaves': {'type': 'int', 'low': 10, 'high': 100, 'step': 5, 'log': False},
+    # 'tree_learner': {'type': 'categorical', 'choices': ['serial', 'feature', 'data']},
+    'num_threads': {'type': 'constant', 'value': os.cpu_count()},
+    'device_type': {'type': 'constant', 'value': 'gpu' if gpu_flag else 'cpu'},
+    'seed': {'type': 'constant', 'value': random_state},
+
+    # Learning control parameters
+    # TODO - check, if it's 'true' or True
+    # 'force_col_wise': {'type': 'constant', 'value': 'true'},
+    'max_depth': {'type': 'int', 'low': 5, 'high': 100, 'step': 5, 'log': False},
+    'min_data_in_leaf': {'type': 'int', 'low': 20, 'high': 100, 'step': 5, 'log': False},
+    'bagging_fraction': {'type': 'float', 'low': 0.5, 'high': 0.99, 'step': 0.01, 'log': False},
+    'bagging_freq': {'type': 'int', 'low': 5, 'high': 50, 'step': 5, 'log': False},
+    'feature_fraction': {'type': 'float', 'low': 0.5, 'high': 1.0, 'step': 0.01, 'log': False},
+    'lambda_l1': {'type': 'float', 'low': 1e-8, 'high': 10.0, 'step': None, 'log': True},
+    'lambda_l2': {'type': 'float', 'low': 1e-8, 'high': 10.0, 'step': None, 'log': True},
+    # 'drop_rate': {'type': 'float', 'low': 0.1, 'high': 0.5, 'step': 0.01, 'log': False},  # For 'dart' ONLY
+
+    # Metric parameters
+    # TODO - leave this parameter to it's default value. calculating metrics seaparately using sklearn.
+    # 'metric': {'type': 'constant', 'value': ['auc', 'average_precision', 'binary_logloss']}, # Binary classification metrics.
+    # 'metric': {'type': 'constant', 'value': ['mae', 'mse', 'rmse', 'mape', 'huber']}, # Regression metrics.
+}
+
+# Optimiser parameters.
+"""
+# LightGBM
+'maximize' --> 'auc', 'average_precision'
+'minimize' --> 'binary_logloss'
+
+# Scikit-learn/Pyzinga framework
+'maximize' --> 'accuracy', 'f1_score', 'precision', 'recall', 'roc_auc', 'average_precision',
+'minimize' --> 'log_loss'
+"""
+# TODO - Use scikit-learn metrics ONLY for optimization.
+optimiser = {
+    'name': 'f1_score',
+    'direction': 'maximize',  # Direction to optimize the metric for study.
+    'alias': 'f1score',
+}
+
+# Tag parameters.
+try:
+    boosting_type = params_lgbm['boosting']['value']
+except KeyError:
+    boosting_type = '-'.join(params_lgbm['boosting']['choices'])
+params_tags = {
+    'model_type': 'lgbm',
+    'optimiser': optimiser['alias'],
+    'boosting_type': boosting_type,
+}
+
+# MLflow parameters.
+mlflow_run_name = f"{boosting_type}-{optimiser['alias']}-{dt.now().strftime('%Y%m%d-%H%M%S')}" # Run name.
+params_mlflow = {
+    'mlflow_exp_name': mlflow_exp_name,
+    'mlflow_run_name': mlflow_run_name,
+    'mlflow_tracking_uri': mlflow_tracking_uri,
+    'parent_run_id': None,  # This will be set during the optimization process.
+}
+
+# Dataset parameters.
+params_data = {
+    'X_train': X_train,
+    'y_train': y_train,
+    'X_val': X_val,
+    'y_val': y_val,
+    'X_test': X_test,
+    'y_test': y_test,
+    'threshold': threshold
+}
+
+# Study parameters.
+params_study = {
+    "n_trials": n_trials,
+    "direction": optimiser['direction'],  # Direction to optimize the metric.
+    "optimiser_metric": optimiser['name'], # Metric to optimize.
+    "run_parallel": True,  # Set to True for parallel execution, False for sequential.
+}
+
+# Model evaluation parameters.
+params_model_eval = {
+    'problem_type': problem_type,
+    'threshold': threshold,  # Threshold for binary classification.
+    'n_samples': 10000,  # Number of samples for SHAP analysis.
+    'topn_features': 20,  # Number of top features to display in model feature importance and SHAP plots.
+}
+
+# Run the optimization process.
+study = pot.run_optimization(
+    params_lgbm=params_lgbm,
+    params_data=params_data,
+    params_mlflow=params_mlflow,
+    params_study=params_study,
+    params_model_eval=params_model_eval,
+    params_tags=params_tags
+)
+
+# Print the best trial results.
+print(f"Best trial: {study.best_trial.number}")
+print(f"Best value: {study.best_value}")
+print(f"Best params: {study.best_params}")
