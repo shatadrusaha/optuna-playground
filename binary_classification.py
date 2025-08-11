@@ -221,9 +221,9 @@ params_lgbm = {
 """
 # TODO - Use scikit-learn metrics ONLY for optimization.
 optimiser = {
-    'name': 'accuracy',
+    'name': 'f1_score',
     'direction': 'maximize',  # Direction to optimize the metric for study.
-    'alias': 'acc',
+    'alias': 'f1score',
 }
 
 # Tag parameters.
