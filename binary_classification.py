@@ -18,7 +18,7 @@ folder_plots = 'artifacts/plots'
 folder_files = 'artifacts/files'
 
 # Optuna study.
-n_trials = 5  # Number of trials to run.
+n_trials = 100  # Number of trials to run.
 threshold = 0.5  # Threshold for binary classification.
 problem_type = 'binary_classification'  # or 'regression'
 
@@ -221,9 +221,9 @@ params_lgbm = {
 """
 # TODO - Use scikit-learn metrics ONLY for optimization.
 optimiser = {
-    'name': 'f1_score',
+    'name': 'accuracy',
     'direction': 'maximize',  # Direction to optimize the metric for study.
-    'alias': 'f1score',
+    'alias': 'acc',
 }
 
 # Tag parameters.
